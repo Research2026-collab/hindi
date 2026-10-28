@@ -1,8 +1,8 @@
 /* Offline-Speicher. Bei jeder Änderung an Dateien VERSION erhöhen, damit Geräte die neue Fassung laden. */
-const VERSION = 'hindi5-2026-10-28-5';
+const VERSION = 'hindi5-2026-10-28-7';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
-  'content/items.js', 'content/lessons-001-030.js', 'content/script.js', 'content/games.js',
+  'content/items.js', 'content/lessons-001-030.js', 'content/script.js', 'content/games.js', 'google-apps-script/Code.gs',
   'fonts/tiro-devanagari-hindi-devanagari-400-normal.woff2',
   'fonts/noto-sans-devanagari-devanagari-400-normal.woff2',
   'fonts/noto-sans-devanagari-devanagari-500-normal.woff2',

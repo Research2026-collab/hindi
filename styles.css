@@ -163,7 +163,7 @@ svg { display: block; }
 .field:first-of-type { margin-top: 18px; }
 .field label, .field .label { font-weight: 600; }
 .help { font-size: 15px; color: var(--muted); max-width: 52ch; }
-input[type=text], select, textarea { width: 100%; background: var(--paper); border: 1px solid var(--line-2); border-radius: var(--r); padding: 12px 14px; font-size: 17px; }
+input[type=text], input[type=url], select, textarea { width: 100%; background: var(--paper); border: 1px solid var(--line-2); border-radius: var(--r); padding: 12px 14px; font-size: 17px; }
 textarea { font: 13px/1.4 ui-monospace, Menlo, monospace; resize: vertical; }
 .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: var(--r); overflow: hidden; max-width: 100%; }
 .seg button { background: none; border: 0; padding: 10px 14px; min-height: 44px; font-size: 15px; color: var(--ink-2); }
@@ -482,3 +482,33 @@ textarea { font: 13px/1.4 ui-monospace, Menlo, monospace; resize: vertical; }
 .pc-locked .pc-stamp { color: var(--line-2); }
 .pc-new { margin-top: 20px; width: 100%; }
 .pc-fresh { animation: stepIn .6s .3s var(--ease) both; }
+
+/* Navigation mit Zahnrad */
+.nav-links { gap: 16px; align-items: center; }
+.icon-link svg { width: 22px; height: 22px; }
+
+/* Abgleich */
+.sub-label { font-size: 14px; color: var(--muted); margin-top: 4px; }
+.howto { font-size: 15px; color: var(--ink-2); }
+.howto summary { cursor: pointer; color: var(--petrol); padding: 6px 0; }
+.howto ol { padding-left: 20px; margin: 6px 0 4px; display: grid; gap: 6px; max-width: 52ch; }
+.howto a { color: var(--petrol); }
+
+/* Lernheft */
+.heft-tools { margin: 14px 0 6px; }
+.heft-jump { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 8px; }
+.heft-jump a { min-width: 36px; height: 36px; display: inline-grid; place-items: center; border: 1px solid var(--line-2); border-radius: 8px; color: var(--petrol); text-decoration: none; font-size: 14px; font-variant-numeric: tabular-nums; }
+.heft-jump a:hover { border-color: var(--petrol); }
+.heft-l { border-top: 2px solid var(--ink-2); padding: 18px 0 26px; margin-top: 18px; scroll-margin-top: 12px; }
+.heft-h { font-size: 22px !important; color: var(--ink) !important; letter-spacing: -.005em !important; margin: 2px 0 14px !important; }
+.heft-dialog { gap: 14px; }
+.heft-key { display: grid; gap: 1px; margin: 18px 0 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.heft-words { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 16px; }
+.heft-words td { border-top: 1px solid var(--line); padding: 6px 8px 6px 0; vertical-align: middle; }
+.heft-words td:last-child { width: 40px; padding-right: 0; }
+.heft-words .tr { font-size: 15px; }
+.heft-note { margin-top: 12px; }
+.heft-hint { text-align: center; grid-column: 1 / -1; }
+.inline-link { padding: 0 2px; color: var(--petrol); font-size: 15px; text-decoration: underline; text-underline-offset: 3px; }
+#sync-zone { display: grid; gap: 10px; }
+#sync-zone .row { margin-bottom: 6px; }

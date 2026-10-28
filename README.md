@@ -18,6 +18,20 @@ Für die Aussprache braucht das iPhone eine Hindi-Stimme. Du findest sie unter E
 
 Auf dem Mac funktioniert alles in Safari und Chrome. Chrome bringt die Stimme „Google हिन्दी“ meist schon mit, die Spracherkennung in Chrome braucht eine Internetverbindung.
 
+## Lernstand auf allen Geräten
+
+Ohne weitere Einrichtung liegt der Lernstand im Browser des jeweiligen Geräts. Mit einer eigenen Google-Tabelle teilen sich iPhone und MacBook denselben Stand. Das Skript dafür liegt in `google-apps-script/Code.gs` und lässt sich in der App unter Einstellungen › Auf allen Geräten mit einem Tipp kopieren.
+
+Die Einrichtung dauert etwa fünf Minuten. Du legst in Google Drive eine neue Tabelle an, öffnest Erweiterungen › Apps Script und fügst das Skript ein. Dann führst du einmal die Funktion `einrichten` aus und bestätigst die Berechtigungen, im Ausführungsprotokoll steht danach dein Schlüssel. Unter Bereitstellen › Neue Bereitstellung wählst du Web-App, Ausführen als „Ich“ und Zugriff „Jeder“, und kopierst die Web-App-URL. URL und Schlüssel trägst du in der App ein. Auf dem zweiten Gerät genügt danach der Verbindungscode, den die App unter „Code für weitere Geräte“ anzeigt.
+
+Der Zugriff „Jeder“ bedeutet, dass die Adresse ohne Google-Anmeldung erreichbar ist. Lesen und Schreiben gelingt aber nur mit dem Schlüssel, der in den Skripteigenschaften liegt. Gespeichert werden nur Lernfortschritt, Name und Einstellungen.
+
+Die App gleicht beim Öffnen, beim Schließen und einige Sekunden nach jeder Antwort ab. Dabei holt sie zuerst den Stand aus der Tabelle und führt ihn mit dem eigenen zusammen. Abgeschlossene Lektionen gehen nie verloren, und bei jedem Wort gewinnt der zuletzt geübte Stand. Ohne Internet lernst du normal weiter, der Abgleich folgt später. Neben dem Speicherstand schreibt das Skript zwei lesbare Blätter in die Tabelle, „Lektionen“ mit Datum und Satz des Tages und „Wörter“ mit Umschrift, Bedeutung und Lernstand.
+
+## Lernheft
+
+Unter „Heft“ auf der Startseite stehen alle Dialoge, Sätze des Tages, neuen Wörter und Hinweise der abgeschlossenen Lektionen, die neueste zuerst. Jede Zeile lässt sich anhören. Mit „Übersetzung verdecken“ wird das Heft zum Selbsttest, die deutsche Bedeutung erscheint dann erst auf Antippen.
+
 ## Wie die Aussprache bewertet wird
 
 Beim Sprechen nutzt die App die Spracherkennung des Browsers mit der Spracheinstellung Hindi (Indien). Das Erkannte wird Wort für Wort mit dem Zielsatz verglichen. Beide Fassungen werden dazu in eine vereinfachte Lautschrift umgewandelt, sodass kleine Schreibvarianten nicht als Fehler zählen, ein falsch verstandenes Wort aber schon. Du siehst danach, welche Wörter klar ankamen, was das System gehört hat und einen gezielten Aussprachehinweis zum ersten unklaren Wort.
@@ -63,7 +77,7 @@ Vor dem Hochladen prüft `node tools/validate.mjs` alle Inhalte. Das Skript meld
 
 ## Tests
 
-`python3 tools/e2e.py` spielt alle 30 Lektionen in einem echten Browser über 30 simulierte Tage durch, mit absichtlich falschen Antworten, und prüft Speicherung, Wiederaufnahme, Wiederholungslogik, Aussprachebewertung (mit simulierter Spracherkennung), Einstellungen, Export und Import sowie die Darstellung in iPhone-Breite. Voraussetzung ist Python mit Playwright.
+`python3 tools/e2e_sync.py` prüft den Abgleich zwischen zwei Geräten mit einem nachgebildeten Apps-Script-Endpunkt sowie das Lernheft. `python3 tools/e2e.py` spielt alle 30 Lektionen in einem echten Browser über 30 simulierte Tage durch, mit absichtlich falschen Antworten, und prüft Speicherung, Wiederaufnahme, Wiederholungslogik, Aussprachebewertung (mit simulierter Spracherkennung), Einstellungen, Export und Import sowie die Darstellung in iPhone-Breite. Voraussetzung ist Python mit Playwright.
 
 ## Dateien
 
@@ -75,6 +89,7 @@ content/items.js           Wortschatz (116 Wörter und Wendungen)
 content/lessons-001-030.js Lektionen 1 bis 30
 content/script.js          Schrift-Strang, ab Lektion 11
 content/games.js           Rollenspiele und Postkarten
+google-apps-script/Code.gs Skript für den Abgleich über eine Google-Tabelle
 fonts/                     Tiro Devanagari Hindi, Noto Sans Devanagari, Source Sans 3 (SIL Open Font License)
 icons/                     App-Symbole
 manifest.webmanifest, sw.js  Installation und Offline-Betrieb

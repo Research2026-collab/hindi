@@ -41,11 +41,94 @@ function load() {
     S.settings = Object.assign(defaults().settings, S.settings || {});
   } catch (e) { storageOk = false; }
 }
-function save() {
+function save(opts = {}) {
+  if (!opts.quiet) S.updatedAt = Date.now();
   try { localStorage.setItem(STORE, JSON.stringify(S)); storageOk = true; } catch (e) { storageOk = false; }
+  if (!opts.quiet && typeof Sync !== 'undefined') Sync.schedule();
 }
 load();
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
+
+/* ───────── Abgleich über eine Google-Tabelle (Apps Script) ─────────
+   Beide Geräte holen zuerst den gespeicherten Stand, führen ihn mit dem eigenen zusammen
+   und schreiben das Ergebnis zurück. So geht nichts verloren, auch wenn zwei Geräte offline waren. */
+const SYNC_KEY = 'hindi5.sync';
+function mergeState(L, R) {
+  if (!R || typeof R !== 'object') return L;
+  const out = JSON.parse(JSON.stringify(L));
+  out.items = out.items || {};
+  for (const [id, r] of Object.entries(R.items || {})) {
+    const l = out.items[id];
+    const newer = !l || (r.last || '') > (l.last || '') || ((r.last || '') === (l.last || '') && (r.ok + r.bad) > (l.ok + l.bad));
+    if (newer) out.items[id] = r;
+  }
+  out.done = out.done || {};
+  for (const [k, v] of Object.entries(R.done || {})) if (!out.done[k] || v < out.done[k]) out.done[k] = v;
+  out.next = Math.max(out.next || 0, R.next || 0);
+  out.days = out.days || {};
+  for (const [d, v] of Object.entries(R.days || {})) out.days[d] = Math.max(out.days[d] || 0, v);
+  out.introSeen = !!(out.introSeen || R.introSeen);
+  if (R.games) {
+    out.games = out.games || { rp: {}, mem: 0 }; out.games.rp = out.games.rp || {};
+    for (const [k, v] of Object.entries(R.games.rp || {})) out.games.rp[k] = Math.max(out.games.rp[k] || 0, v);
+  }
+  if ((R.updatedAt || 0) > (L.updatedAt || 0)) {
+    out.name = R.name || out.name;
+    out.settings = Object.assign({}, out.settings, R.settings || {});
+    if (R.last && (!out.last || R.last.date >= out.last.date)) out.last = R.last;
+  }
+  out.updatedAt = Math.max(L.updatedAt || 0, R.updatedAt || 0);
+  return out;
+}
+const Sync = {
+  cfg: null, timer: null, busy: false, lastOk: 0, lastError: '',
+  load() { try { this.cfg = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); } catch (e) { this.cfg = null; } },
+  store() { try { this.cfg ? localStorage.setItem(SYNC_KEY, JSON.stringify(this.cfg)) : localStorage.removeItem(SYNC_KEY); } catch (e) {} },
+  on() { return !!(this.cfg && this.cfg.url && this.cfg.token); },
+  code() { return this.on() ? btoa(unescape(encodeURIComponent(JSON.stringify({ u: this.cfg.url, t: this.cfg.token })))) : ''; },
+  fromCode(c) { try { const o = JSON.parse(decodeURIComponent(escape(atob(c.trim())))); return o.u && o.t ? { url: o.u, token: o.t } : null; } catch (e) { return null; } },
+  async call(body) {
+    const r = await fetch(this.cfg.url, { method: 'POST', body: JSON.stringify({ token: this.cfg.token, ...body }), redirect: 'follow' });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.fehler === 'schluessel' ? 'Der Schlüssel passt nicht zur Tabelle.' : j.fehler === 'nicht eingerichtet' ? 'Im Apps-Script wurde „einrichten“ noch nicht ausgeführt.' : 'Die Tabelle hat die Anfrage abgelehnt.');
+    return j;
+  },
+  overview() {
+    const lektionen = LESSONS.map((L, i) => S.done[L.id] ? [i + 1, L.title, S.done[L.id], fill(L.key.hi), fill(L.key.tr), fill(L.key.de)] : null).filter(Boolean);
+    const woerter = LESSONS.flatMap((L, i) => L.new.filter(id => S.items[id]).map(id => [ITEMS[id].hi, ITEMS[id].tr, ITEMS[id].de, i + 1, itemState(id).label]));
+    return { lektionen, woerter };
+  },
+  async sync(reason = '') {
+    if (!this.on() || this.busy) return false;
+    this.busy = true;
+    try {
+      const got = await this.call({ aktion: 'laden' });
+      const before = JSON.stringify({ ...S, session: null, updatedAt: 0 });
+      const merged = mergeState(S, got.stand);
+      merged.session = S.session;
+      S = merged;
+      save({ quiet: true });
+      const { session, ...stand } = S;
+      await this.call({ aktion: 'speichern', stand, geraet: navigator.platform || '', uebersicht: this.overview() });
+      this.lastOk = Date.now(); this.lastError = '';
+      const changed = before !== JSON.stringify({ ...S, session: null, updatedAt: 0 });
+      if (changed && ['home', 'woerter', 'lernpfad', 'heft'].includes(current.view)) route(current.view);
+      return true;
+    } catch (e) {
+      this.lastError = e && e.message && !/fetch|network|JSON/i.test(e.message) ? e.message : 'Die Tabelle ist gerade nicht erreichbar. Der Lernstand bleibt auf diesem Gerät und wird später abgeglichen.';
+      return false;
+    } finally {
+      this.busy = false;
+      if (current.view === 'einstellungen') renderSyncStatus();
+    }
+  },
+  schedule(ms = 4000) {
+    if (!this.on()) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.sync('auto'), ms);
+  }
+};
+Sync.load();
 
 /* ───────── Inhalte nachschlagen ───────── */
 const lessonIndexOfItem = {};
@@ -446,6 +529,7 @@ const ICON = {
   mic: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3.5" width="6" height="11" rx="3" fill="currentColor"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5v3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
   stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg>',
   back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3L5.5 5.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
   play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5z" fill="currentColor"/></svg>'
 };
 const audioBtn = (text, label = 'Anhören', withSlow = true) =>
@@ -457,7 +541,33 @@ function hiWithTr(hi, cls = 'dopt') {
 }
 const deva = (hi, cls = '') => `<span class="deva ${cls}" lang="hi">${esc(fill(hi))}</span>`;
 
-const VIEWS = { lektion: () => renderLesson(), lernpfad: () => renderPath(), einstellungen: () => renderSettings(), woerter: () => renderWords(), details: () => renderDetail(), rollenspiel: () => renderRoleplay(), memory: () => renderMemory(), postkarten: () => renderPostcards(), home: () => renderHome() };
+/* Lernheft: alle Texte abgeschlossener Lektionen zum Nachlesen */
+function renderNotebook() {
+  const done = LESSONS.map((L, i) => ({ L, i })).filter(x => S.done[x.L.id]);
+  const hideDe = !!current.heftDe;
+  const de = t => hideDe ? `<button class="rp-de" data-act="reveal-de">${esc(fill(t))}</button>` : `<span class="de">${esc(fill(t))}</span>`;
+  const sp = hi => `<button class="speak-btn sm" data-act="say" data-text="${esc(hi)}" aria-label="Anhören">${ICON.speaker}</button>`;
+  const lessonBlock = ({ L, i }) => `<section class="heft-l" id="heft-${L.id}">
+      <p class="small">Lektion ${i + 1} · ${esc(L.topic)} · gelernt ${relDay(S.done[L.id])}</p>
+      <h3 class="heft-h">${esc(L.title)}</h3>
+      ${L.dialog ? `<ol class="dialog heft-dialog">${L.dialog.map(d => `<li class="${d.who === 'du' ? 'me' : ''}"><span class="who">${d.who === 'du' ? 'Du' : esc(d.who)}</span><div class="line"><div class="line-hi">${deva(d.hi, 'md')}${sp(d.hi)}</div><span class="tr">${esc(fill(d.tr))}</span>${de(d.de)}</div></li>`).join('')}</ol>` : ''}
+      ${L.gloss ? `<p class="small">Im Dialog außerdem: ${Object.entries(L.gloss).map(([h, d]) => `${deva(h, 'inl')} ${esc(d)}`).join(' · ')}</p>` : ''}
+      <div class="heft-key"><span class="aside-k">Satz des Tages</span><div class="line-hi">${deva(L.key.hi, 'md')}${sp(L.key.hi)}</div><span class="tr">${esc(fill(L.key.tr))}</span>${de(L.key.de)}</div>
+      <table class="heft-words"><tbody>${L.new.map(id => { const it = ITEMS[id]; return `<tr><td>${deva(it.hi, 'inl')}</td><td class="tr">${esc(it.tr)}</td><td>${hideDe ? `<button class="rp-de" data-act="reveal-de">${esc(it.de)}</button>` : esc(it.de)}</td><td>${sp(it.hi)}</td></tr>`; }).join('')}</tbody></table>
+      ${L.note ? `<p class="help heft-note">${esc(L.note)}</p>` : ''}
+    </section>`;
+  app.innerHTML = `<div class="page view-enter">${backNav()}
+    <h2>Lernheft</h2>
+    ${done.length ? `<p class="small">Alle Dialoge, Sätze und Wörter deiner abgeschlossenen Lektionen. Tippe auf den Lautsprecher, um sie zu hören.</p>
+      <div class="row heft-tools"><button class="secondary" data-act="heft-de">${hideDe ? 'Übersetzung zeigen' : 'Übersetzung verdecken'}</button></div>
+      <nav class="heft-jump" aria-label="Lektionen">${done.map(({ L, i }) => `<a href="#heft-${L.id}" data-jump="heft-${L.id}">${i + 1}</a>`).join('')}</nav>
+      ${done.slice().reverse().map(lessonBlock).join('')}`
+    : '<p class="help">Hier stehen nach deiner ersten Lektion alle Dialoge, Sätze des Tages und neuen Wörter zum Nachlesen.</p>'}
+  </div>`;
+  app.querySelectorAll('[data-jump]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); const t = document.getElementById(a.dataset.jump); if (t) t.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth' }); }));
+}
+
+const VIEWS = { heft: () => renderNotebook(), lektion: () => renderLesson(), lernpfad: () => renderPath(), einstellungen: () => renderSettings(), woerter: () => renderWords(), details: () => renderDetail(), rollenspiel: () => renderRoleplay(), memory: () => renderMemory(), postkarten: () => renderPostcards(), home: () => renderHome() };
 function route(view) {
   if (view === 'lesson') view = 'lektion';
   if (!VIEWS[view]) view = 'home';
@@ -515,7 +625,7 @@ function renderHome() {
   <div class="home view-enter">
     <nav class="topnav" aria-label="Navigation">
       <span class="brand" lang="hi">हिंदी</span>
-      <span class="nav-links"><button class="link" data-act="words">Wörter</button><button class="link" data-act="path">Lernpfad</button><button class="link" data-act="settings">Einstellungen</button></span>
+      <span class="nav-links"><button class="link" data-act="heft">Heft</button><button class="link" data-act="words">Wörter</button><button class="link" data-act="path">Lernpfad</button><button class="link icon-link" data-act="settings" aria-label="Einstellungen">${ICON.gear}</button></span>
     </nav>
     <section class="greet">
       <h1><span class="deva hello" lang="hi">नमस्ते,</span><span class="name">${esc(S.name)}</span></h1>
@@ -595,7 +705,7 @@ function renderDetail() {
     <p class="small">Lektion ${i + 1} · ${esc(L.topic)}</p>
     <h2 class="detail-h">${esc(L.title)}</h2>
     ${L.goal ? `<p class="lead">Nach dieser Lektion kannst du ${esc(L.goal)}</p>` : ''}
-    <div class="row detail-cta"><button class="primary" data-act="${done ? 'repeat' : 'start'}" data-idx="${i}">${done ? 'Lektion wiederholen' : 'Lektion starten'}</button></div>
+    <div class="row detail-cta"><button class="primary" data-act="${done ? 'repeat' : 'start'}" data-idx="${i}">${done ? 'Lektion wiederholen' : 'Lektion starten'}</button>${done ? '<button class="ghost" data-act="heft">Im Lernheft lesen</button>' : ''}</div>
     <h3>Neue Wörter</h3>
     <ul class="vlist">${L.new.map(wordRow).join('')}</ul>
     <h3>Satz des Tages</h3>
@@ -656,8 +766,9 @@ function renderSettings() {
       : `<p class="help">${TTS.ready ? 'Auf diesem Gerät ist keine Hindi-Stimme installiert.' : 'Stimmen werden geladen.'} iPhone und Mac: Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen › Hindi. Am Mac in Chrome ist „Google हिन्दी“ meist schon vorhanden.</p>`}
     </div>
     <div class="field"><span class="label">Aussprache</span><p class="help">${speechState}</p></div>
-    <div class="field"><span class="label">Lernstand sichern</span>
-      <p class="help">Der Lernstand liegt nur auf diesem Gerät. Zum Übertragen auf ein anderes Gerät kopierst du ihn hier und fügst ihn dort ein.</p>
+    <div class="field" id="sync-field"><span class="label">Auf allen Geräten</span><div id="sync-zone"></div></div>
+    <div class="field"><span class="label">Lernstand von Hand sichern</span>
+      <p class="help">Ohne Google-Tabelle kannst du den Lernstand hier kopieren und auf einem anderen Gerät einfügen.</p>
       <div class="row"><button class="secondary" data-act="export">Lernstand kopieren</button><button class="ghost" data-act="import-open">Lernstand einfügen</button></div>
       <div id="io" hidden><textarea id="f-io" rows="4" spellcheck="false" aria-label="Lernstand"></textarea><div class="row"><button class="secondary" data-act="import" id="io-apply">Übernehmen</button></div><p class="help" id="io-msg"></p></div>
     </div>
@@ -666,10 +777,35 @@ function renderSettings() {
     </div>
     <p class="small colophon">${LESSONS.length} Lektionen · ${Object.keys(ITEMS).length} Wörter und Wendungen</p>
   </div>`;
+  renderSyncStatus();
   const n = document.getElementById('f-name');
   n.addEventListener('change', () => { S.name = n.value.trim() || 'Elisabeth'; save(); toast('Gespeichert.'); });
   const fv = document.getElementById('f-voice');
   if (fv) fv.addEventListener('change', () => { S.settings.voice = fv.value; save(); });
+}
+
+function renderSyncStatus() {
+  const z = document.getElementById('sync-zone'); if (!z) return;
+  if (Sync.on()) {
+    const t = Sync.lastOk ? new Date(Sync.lastOk).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '';
+    z.innerHTML = `<p class="help">${Sync.busy ? 'Wird gerade abgeglichen …' : Sync.lastError ? esc(Sync.lastError) : t ? `Verbunden mit deiner Google-Tabelle. Zuletzt abgeglichen um ${t} Uhr.` : 'Verbunden mit deiner Google-Tabelle.'}</p>
+      <div class="row"><button class="secondary" data-act="sync-now">Jetzt abgleichen</button><button class="ghost" data-act="sync-code">Code für weitere Geräte</button><button class="ghost danger" data-act="sync-off">Trennen</button></div>
+      <div id="sync-code" hidden><p class="help">Füge diesen Code auf deinem anderen Gerät unter Einstellungen › Auf allen Geräten ein.</p><textarea id="f-code" rows="3" readonly aria-label="Verbindungscode"></textarea></div>`;
+  } else {
+    z.innerHTML = `<p class="help">Verbinde die App mit einer eigenen Google-Tabelle. Dann haben iPhone und MacBook denselben Lernstand, und in der Tabelle stehen deine Lektionen und Wörter zum Nachlesen.</p>
+      <details class="howto"><summary>So richtest du die Tabelle ein</summary><ol>
+        <li>Lege in Google Drive eine neue Tabelle an, etwa „Hindi Lernstand“.</li>
+        <li>Öffne Erweiterungen › Apps Script, lösche den vorhandenen Text und füge das Skript ein. Speichern. <button class="link inline-link" data-act="copy-script">Skript kopieren</button></li>
+        <li>Wähle oben die Funktion „einrichten“ und klicke auf Ausführen. Bestätige die Berechtigungen. Im Protokoll steht danach dein Schlüssel.</li>
+        <li>Klicke auf Bereitstellen › Neue Bereitstellung › Web-App. Ausführen als: Ich. Zugriff: Jeder. Kopiere die Web-App-URL.</li>
+        <li>Trage URL und Schlüssel hier ein. Auf dem zweiten Gerät genügt danach der Verbindungscode.</li></ol></details>
+      <label for="f-surl" class="sub-label">Web-App-URL</label><input id="f-surl" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
+      <label for="f-stok" class="sub-label">Schlüssel</label><input id="f-stok" type="text" autocomplete="off" spellcheck="false">
+      <div class="row"><button class="secondary" data-act="sync-connect">Verbinden</button></div>
+      <label for="f-scode" class="sub-label">Oder Verbindungscode vom anderen Gerät</label><input id="f-scode" type="text" autocomplete="off" spellcheck="false">
+      <div class="row"><button class="ghost" data-act="sync-paste">Mit Code verbinden</button></div>
+      <p class="help" id="sync-msg">${esc(Sync.lastError || '')}</p>`;
+  }
 }
 
 /* ───────── Lektion ───────── */
@@ -955,7 +1091,7 @@ const RENDER = {
         <li>Du kennst inzwischen <strong>${kw} ${kw === 1 ? 'Wort' : 'Wörter'}</strong>.</li>
         ${us ? `<li><strong>${us} ${us === 1 ? 'Satz' : 'Sätze'}</strong> kannst du bereits ohne Hilfe verstehen.</li>` : ''}
       </ul>`;
-    dock.innerHTML = `<button class="primary" id="primary" data-act="finish">${se.mode === 'lesson' ? 'Für heute fertig' : 'Fertig'}</button>`;
+    dock.innerHTML = `<button class="primary" id="primary" data-act="finish">${se.mode === 'lesson' ? 'Für heute fertig' : 'Fertig'}</button>${se.mode !== 'review' && se.mode !== 'practice' ? '<p class="small heft-hint">Dialog, Satz und Wörter stehen ab jetzt auch im Lernheft.</p>' : ''}`;
   }
 };
 
@@ -1322,6 +1458,42 @@ const ACT = {
     }
     renderMemory();
   },
+  async 'sync-connect'() {
+    const url = document.getElementById('f-surl').value.trim(), token = document.getElementById('f-stok').value.trim();
+    const msg = document.getElementById('sync-msg');
+    if (!/^https:\/\/script\.google(usercontent)?\.com\//.test(url)) { msg.textContent = 'Die Adresse sollte mit https://script.google.com/macros/ beginnen und auf /exec enden.'; return; }
+    if (!token) { msg.textContent = 'Bitte trage den Schlüssel aus dem Apps-Script-Protokoll ein.'; return; }
+    Sync.cfg = { url, token }; msg.textContent = 'Verbinde …';
+    const ok = await Sync.sync('connect');
+    if (ok) { Sync.store(); toast('Verbunden. Der Lernstand ist abgeglichen.'); renderSettings(); }
+    else { const e = Sync.lastError; Sync.cfg = null; Sync.lastError = e; renderSyncStatus(); }
+  },
+  async 'sync-paste'() {
+    const c = Sync.fromCode(document.getElementById('f-scode').value);
+    const msg = document.getElementById('sync-msg');
+    if (!c) { msg.textContent = 'Der Code ist unvollständig. Kopiere ihn auf dem anderen Gerät noch einmal.'; return; }
+    Sync.cfg = c; msg.textContent = 'Verbinde …';
+    const ok = await Sync.sync('connect');
+    if (ok) { Sync.store(); toast('Verbunden. Der Lernstand ist abgeglichen.'); renderSettings(); }
+    else { const e = Sync.lastError; Sync.cfg = null; Sync.lastError = e; renderSyncStatus(); }
+  },
+  async 'sync-now'() { renderSyncStatus(); const ok = await Sync.sync('manual'); toast(ok ? 'Abgeglichen.' : 'Abgleich gerade nicht möglich.'); },
+  'sync-code'() {
+    const box = document.getElementById('sync-code'), ta = document.getElementById('f-code');
+    box.hidden = false; ta.value = Sync.code(); ta.focus(); ta.select();
+    try { navigator.clipboard.writeText(ta.value).then(() => toast('Code kopiert.'), () => {}); } catch (e) {}
+  },
+  async 'copy-script'() {
+    try {
+      const t = await (await fetch('google-apps-script/Code.gs')).text();
+      await navigator.clipboard.writeText(t);
+      toast('Skript kopiert. Jetzt in Apps Script einfügen.');
+    } catch (e) { window.open('google-apps-script/Code.gs', '_blank'); }
+  },
+  'sync-off'() { Sync.cfg = null; Sync.lastError = ''; Sync.store(); renderSettings(); toast('Getrennt. Der Lernstand bleibt auf diesem Gerät.'); },
+  heft() { route('heft'); },
+  'reveal-de'(el) { el.classList.add('on'); },
+  'heft-de'() { current.heftDe = !current.heftDe; renderNotebook(); },
   dunno() {
     const st = step(); if (!st || st.res) return;
     st.res = { ok: false, dunno: true, val: null };
@@ -1393,7 +1565,10 @@ addEventListener('hashchange', () => {
   const v = VIEWS[h] ? h : 'home';
   if (v !== current.view) { if (v === 'lektion' && !S.session) route('home'); else route(v); }
 });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { save({ quiet: true }); if (Sync.on()) Sync.sync('hidden'); }
+  else if (Sync.on() && Date.now() - Sync.lastOk > 60000) Sync.sync('visible');
+});
 addEventListener('pagehide', save);
 
 /* ───────── Hinweis ───────── */
@@ -1408,10 +1583,11 @@ function toast(msg, ms = 3200) {
 /* ───────── Start ───────── */
 if (S.session && S.session.date !== today() && S.session.mode === 'review') S.session = null;
 TTS.init();
+if (Sync.on()) setTimeout(() => Sync.sync('start'), 300);
 const startHash = location.hash.slice(1);
-route(startHash === 'lektion' ? (S.session ? 'lektion' : 'home') : ['lernpfad', 'einstellungen', 'woerter'].includes(startHash) ? startHash : 'home');
+route(startHash === 'lektion' ? (S.session ? 'lektion' : 'home') : ['lernpfad', 'einstellungen', 'woerter', 'heft'].includes(startHash) ? startHash : 'home');
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
-window.Hindi5 = { get state() { return S; }, mem: () => current.mem, evaluate, devaSkel, dueItems, grade, save, buildLesson, LESSONS, ITEMS };
+window.Hindi5 = { get state() { return S; }, Sync, mergeState, mem: () => current.mem, evaluate, devaSkel, dueItems, grade, save, buildLesson, LESSONS, ITEMS };
 })();
